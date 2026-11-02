@@ -13,6 +13,7 @@ type Config struct {
 	Volume     Volume     `json:"volume"`
 	Microphone Microphone `json:"microphone"`
 	Presence   Presence   `json:"presence"`
+	Dock       Dock       `json:"dock"`
 }
 
 const metricsInterval = 60
@@ -23,6 +24,7 @@ func Defaults() Config {
 		Volume:     defaultVolume(),
 		Microphone: defaultMicrophone(),
 		Presence:   defaultPresence(),
+		Dock:       defaultDock(),
 	}
 	c.Visual.Label = layout.Manufacturer
 	c.Diag.Interval = metricsInterval
@@ -43,6 +45,7 @@ type Writer struct {
 func (w Writer) Volume() VolumeWriter         { return VolumeWriter{st: w.st} }
 func (w Writer) Microphone() MicrophoneWriter { return MicrophoneWriter{st: w.st} }
 func (w Writer) Presence() PresenceWriter     { return PresenceWriter{st: w.st} }
+func (w Writer) Dock() DockWriter             { return DockWriter{st: w.st} }
 
 type Labeled interface{ Label() string }
 

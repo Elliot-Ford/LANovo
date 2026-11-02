@@ -30,6 +30,8 @@ type Thermal struct {
 }
 
 type Board struct {
+	// NativeAPI is the API the board's native helpers are built for; lanovod
+	// carries a build for each API any board names.
 	NativeAPI int
 
 	Name  string
@@ -40,6 +42,10 @@ type Board struct {
 
 	PanelWidth, PanelHeight int
 	Diagonal                float64
+
+	// FBWidth and FBHeight are fb0's mode when it differs from the panel as
+	// drawn (a SurfaceFlinger that rotates the display itself); 0 means the same.
+	FBWidth, FBHeight int
 
 	Motion bool
 
@@ -69,7 +75,15 @@ type Board struct {
 
 	Amp, MicADC *Chip
 
+	// DigitalMics means the microphones are PDM mics on the SoC's own DMIC
+	// input: capture needs no ADC loaded, and carries 16-bit samples.
+	DigitalMics bool
+
 	AmpPins []int
+
+	// SpeakerSwitches are mixer switches turned on before playback opens; on a
+	// MediaTek AFE with no backend enabled, DL1's prepare fails.
+	SpeakerSwitches []string
 
 	// dBFS for 94 dB SPL at the vendor gain, from the OEM app's CastAudioMicSensitivity.
 	MicSensitivity int
@@ -87,6 +101,10 @@ type Board struct {
 
 	SubWidth, SubHeight int
 
+	// ChargeBase is the serial port of a wireless charging base with a night
+	// light; "" means none.
+	ChargeBase string
+
 	Root string
 }
 
@@ -94,12 +112,19 @@ func (b Board) Paths() layout.Paths { return layout.For(b.Root) }
 
 type Cap uint64
 
-const SecureVideo Cap = 1 << iota
+const (
+	SecureVideo Cap = 1 << iota
+	// Dock is a wireless charging base with a night light.
+	Dock
+)
 
 func (b Board) Caps() Cap {
 	var c Cap
 	if len(b.SecureDecoders) > 0 {
 		c |= SecureVideo
+	}
+	if b.ChargeBase != "" {
+		c |= Dock
 	}
 	return c
 }

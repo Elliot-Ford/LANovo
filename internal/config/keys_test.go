@@ -65,6 +65,7 @@ func TestSavedKeysKeepTheirLayout(t *testing.T) {
 		"access",
 		"airplay",
 		"presence",
+		"dock",
 		"alerts",
 		"apps",
 		"calendar",

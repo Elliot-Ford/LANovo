@@ -63,8 +63,16 @@ func parseInputs(s string) []string {
 	return names
 }
 
+func (b Board) fbSize() (int, int) {
+	if b.FBWidth != 0 && b.FBHeight != 0 {
+		return b.FBWidth, b.FBHeight
+	}
+	return b.PanelWidth, b.PanelHeight
+}
+
 func (b Board) fits(f Facts) bool {
-	return b.PanelWidth == f.Width && b.PanelHeight == f.Height &&
+	w, h := b.fbSize()
+	return w == f.Width && h == f.Height &&
 		b.hasTouch(f.Inputs) && b.hasSoundCard(f.Inputs)
 }
 

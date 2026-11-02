@@ -23,6 +23,7 @@ import (
 	_ "github.com/ygelfand/LANovo/internal/feature/dhcp"
 	_ "github.com/ygelfand/LANovo/internal/feature/diag"
 	_ "github.com/ygelfand/LANovo/internal/feature/discovery"
+	_ "github.com/ygelfand/LANovo/internal/feature/dock"
 	_ "github.com/ygelfand/LANovo/internal/feature/doorbell"
 	_ "github.com/ygelfand/LANovo/internal/feature/drawer"
 	_ "github.com/ygelfand/LANovo/internal/feature/drm"
@@ -36,6 +37,7 @@ import (
 	_ "github.com/ygelfand/LANovo/internal/feature/message"
 	_ "github.com/ygelfand/LANovo/internal/feature/microphone"
 	_ "github.com/ygelfand/LANovo/internal/feature/network"
+
 	_ "github.com/ygelfand/LANovo/internal/feature/poster"
 	_ "github.com/ygelfand/LANovo/internal/feature/privacy"
 	_ "github.com/ygelfand/LANovo/internal/feature/reboot"

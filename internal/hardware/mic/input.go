@@ -27,7 +27,7 @@ type setting struct {
 
 func inputFor(b board.Board) input {
 	if b.SoC == board.MediaTek {
-		return &mediatek{chip: b.MicADC}
+		return &mediatek{chip: b.MicADC, digital: b.DigitalMics}
 	}
 	return qualcomm{skipTertiaryChannels: b.MicNoTertiaryChannels}
 }

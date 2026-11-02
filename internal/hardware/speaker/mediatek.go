@@ -12,8 +12,9 @@ import (
 )
 
 type mediatek struct {
-	chip *board.Chip
-	both bool
+	chip     *board.Chip
+	both     bool
+	switches []string
 
 	mu     sync.Mutex
 	tables mtkaudio.Tables
@@ -21,9 +22,17 @@ type mediatek struct {
 	dB     float64
 }
 
-func newMediatek(b board.Board) *mediatek { return &mediatek{chip: b.Amp, both: b.Stereo} }
+func newMediatek(b board.Board) *mediatek {
+	return &mediatek{chip: b.Amp, both: b.Stereo, switches: b.SpeakerSwitches}
+}
 
-func (m *mediatek) route() []setting { return nil }
+func (m *mediatek) route() []setting {
+	var r []setting
+	for _, name := range m.switches {
+		r = append(r, setting{name: name, value: 1})
+	}
+	return r
+}
 
 func (m *mediatek) stereo() bool { return m.both }
 

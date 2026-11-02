@@ -71,13 +71,15 @@ func TestRC(t *testing.T) {
 func TestCarriedLeavesTheBootImageRC(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
-		paths  layout.Paths
+		board  board.Board
 		wantRC bool
 	}{
-		{name: "system", paths: board.Blueberry.Paths(), wantRC: true},
-		{name: "data", paths: board.Penghu.Paths(), wantRC: false},
+		{name: "system", board: board.Blueberry, wantRC: true},
+		{name: "data", board: board.Penghu, wantRC: false},
+		{name: "magisk", board: board.Helios, wantRC: false},
 	} {
-		carried, err := Carried(tt.paths)
+		paths := tt.board.Paths()
+		carried, err := Carried(tt.board)
 		if err != nil {
 			t.Fatalf("Carried(%s) = %v", tt.name, err)
 		}
@@ -85,13 +87,65 @@ func TestCarriedLeavesTheBootImageRC(t *testing.T) {
 		for _, p := range carried {
 			if p.Name == InitRC.Name {
 				hasRC = true
-				if p.Path != tt.paths.InitRC {
-					t.Errorf("Carried(%s) rc at %q, want %q", tt.name, p.Path, tt.paths.InitRC)
+				if p.Path != paths.InitRC {
+					t.Errorf("Carried(%s) rc at %q, want %q", tt.name, p.Path, paths.InitRC)
 				}
 			}
 		}
 		if hasRC != tt.wantRC {
 			t.Errorf("Carried(%s) carries the rc = %v, want %v", tt.name, hasRC, tt.wantRC)
+		}
+	}
+}
+
+func TestAMagiskBoardCarriesItsBootScript(t *testing.T) {
+	paths := board.Helios.Paths()
+	if !paths.Magisk() || paths.Service != layout.MagiskService {
+		t.Fatalf("helios paths %+v, want a Magisk service at %s", paths, layout.MagiskService)
+	}
+	carried, err := Carried(board.Helios)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		Surface.Name:       paths.Surface,
+		Shim.Name:          paths.Shim,
+		MagiskService.Name: paths.Service,
+		WifiConf.Name:      paths.WifiConf,
+	}
+	for _, p := range carried {
+		path, ok := want[p.Name]
+		if !ok {
+			t.Errorf("helios carries %s at %s, which a board with no camera does not need",
+				p.Name, p.Path)
+			continue
+		}
+		if p.Path != path {
+			t.Errorf("%s at %s, want %s", p.Name, p.Path, path)
+		}
+		delete(want, p.Name)
+	}
+	for name := range want {
+		t.Errorf("helios does not carry its %s", name)
+	}
+	if len(MagiskService.Data()) == 0 || len(WifiConf.Data()) == 0 || len(MagiskInstaller()) == 0 {
+		t.Error("the Magisk scripts are not built in")
+	}
+}
+
+func TestEveryBoardWithACameraCarriesItsHelpers(t *testing.T) {
+	for _, b := range board.All() {
+		carried, err := Carried(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		has := map[string]bool{}
+		for _, p := range carried {
+			has[p.Name] = true
+		}
+		if has[Camera.Name] != (b.CameraWidth > 0) || has[CamShim.Name] != (b.CameraWidth > 0) {
+			t.Errorf("%s: camera parts %v/%v with a %dpx camera",
+				b.Name, has[Camera.Name], has[CamShim.Name], b.CameraWidth)
 		}
 	}
 }

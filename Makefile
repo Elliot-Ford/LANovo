@@ -58,10 +58,14 @@ REMOUNT_MP = $$(grep -qE ' /system ' /proc/mounts && echo /system || echo /)
 
 ##@ Development
 
-NDK ?= $(firstword $(ANDROID_NDK_HOME) $(ANDROID_NDK_LATEST_HOME) $(wildcard /opt/homebrew/Caskroom/android-ndk/*/AndroidNDK*.app/Contents/NDK))
+ANDROID ?= $(firstword $(ANDROID_HOME) $(ANDROID_SDK_ROOT) $(wildcard $(HOME)/Android/Sdk))
+NDK ?= $(firstword $(ANDROID_NDK_HOME) $(ANDROID_NDK_LATEST_HOME) $(lastword $(sort $(wildcard $(ANDROID)/ndk/*))) $(wildcard /opt/homebrew/Caskroom/android-ndk/*/AndroidNDK*.app/Contents/NDK))
 NDK_HOST := $(if $(filter Darwin,$(shell uname -s)),darwin-x86_64,linux-x86_64)
 BOARD ?=
-NATIVE_API = $(shell go run ./cmd/native-target $(BOARD))
+# lanovod carries the native helpers for every API a board names; BOARD=
+# narrows the individual build-* targets below to one board's API.
+NATIVE_APIS = $(shell go run ./cmd/native-target -all)
+NATIVE_API = $(if $(BOARD),$(shell go run ./cmd/native-target $(BOARD)),$(firstword $(NATIVE_APIS)))
 LIBCOUNTERTOP_MODULE := github.com/ygelfand/libcountertop
 LIBCOUNTERTOP_DIR = $(shell go list -m -f '{{.Dir}}' $(LIBCOUNTERTOP_MODULE))
 SURFACE_SRC = $(LIBCOUNTERTOP_DIR)/native/surface
@@ -75,6 +79,13 @@ AIRPLAY_BIN = $(BUILD_DIR)/lanovo-airplay-api$(NATIVE_API)
 COUNTERTOP_NATIVE = $(MAKE) -f "$(LIBCOUNTERTOP_DIR)/native/Makefile" API="$(NATIVE_API)" PREFIX=lanovo OUT="$(abspath $(BUILD_DIR))" NDK="$(NDK)" SURFACE_BIN="$(abspath $(SURFACE_BIN))" CAMERA_BIN="$(abspath $(CAMERA_BIN))" CAMSHIM_BIN="$(abspath $(CAMSHIM_BIN))" ASR_BIN="$(abspath $(ASR_BIN))" PRYON_BIN="$(abspath $(PRYON_BIN))" AIRPLAY_BIN="$(abspath $(AIRPLAY_BIN))"
 PARTS_DIR := internal/parts/payload
 
+# Magisk boards (the SmartClock 2) run the API-28 surface helper on Android 10
+# with this preloaded; lanovod carries it with the helpers.
+SHIM_API := 28
+SHIM_SRC := internal/parts/magisk/shim.c
+SHIM := $(BUILD_DIR)/liblanovo-shim.so
+SHIM_CC = $(NDK)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin/armv7a-linux-androideabi$(SHIM_API)-clang
+
 .PHONY: build
 build: build-lanovo build-lanovod ## Build everything
 
@@ -83,15 +94,27 @@ build-lanovo: ## Build the host CLI into ./bin
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/lanovo ./cmd/lanovo
 
+.PHONY: build-native
+build-native: build-shim ## Build the native helpers for every API a board names
+	@for api in $(NATIVE_APIS); do \
+		$(MAKE) --no-print-directory NATIVE_API=$$api \
+			build-surface build-camshim build-camera build-asr build-pryon build-airplay || exit 1; \
+	done
+
 .PHONY: build-lanovod
-build-lanovod: build-surface build-camshim build-camera build-asr build-pryon build-airplay ## Cross-compile lanovod for the display, carrying its native parts (PACK=bin/upx-5.3.0/build/upx to compress it)
-	@mkdir -p $(BUILD_DIR) $(PARTS_DIR)
-	cp $(SURFACE_BIN) $(PARTS_DIR)/lanovo-surface
-	cp $(CAMSHIM_BIN) $(PARTS_DIR)/liblanovo-camshim.so
-	cp $(CAMERA_BIN) $(PARTS_DIR)/lanovo-camera
-	cp $(ASR_BIN) $(PARTS_DIR)/lanovo-asr
-	cp $(PRYON_BIN) $(PARTS_DIR)/lanovo-pryon
-	cp $(AIRPLAY_BIN) $(PARTS_DIR)/lanovo-airplay
+build-lanovod: build-native ## Cross-compile lanovod for the displays, carrying their native parts (PACK=bin/upx-5.3.0/build/upx to compress it)
+	@mkdir -p $(BUILD_DIR)
+	rm -rf $(PARTS_DIR)
+	@for api in $(NATIVE_APIS); do \
+		d=$(PARTS_DIR)/api$$api; mkdir -p $$d && \
+		cp $(BUILD_DIR)/lanovo-surface-api$$api $$d/lanovo-surface && \
+		cp $(BUILD_DIR)/liblanovo-camshim-api$$api.so $$d/liblanovo-camshim.so && \
+		cp $(BUILD_DIR)/lanovo-camera-api$$api $$d/lanovo-camera && \
+		cp $(BUILD_DIR)/lanovo-asr-api$$api $$d/lanovo-asr && \
+		cp $(BUILD_DIR)/lanovo-pryon-api$$api $$d/lanovo-pryon && \
+		cp $(BUILD_DIR)/lanovo-airplay-api$$api $$d/lanovo-airplay || exit 1; \
+	done
+	cp $(SHIM) $(PARTS_DIR)/liblanovo-shim.so
 	$(DEVICE_ENV) go build -tags "payload$(if $(TAGS),$(comma)$(TAGS))" -ldflags "$(DEVICE_LDFLAGS)" -o $(DEVICE_BIN) ./cmd/lanovod
 	$(if $(PACK),$(PACK) -q $(DEVICE_BIN))
 	$(if $(PACK),$(firstword $(PACK)) -q -t $(DEVICE_BIN))
@@ -134,6 +157,14 @@ build-pryon: countertop-native-source ## Build the Pryon wake word helper with t
 .PHONY: build-airplay
 build-airplay: countertop-native-source ## Build the AirPlay mirroring helper with the NDK
 	+$(COUNTERTOP_NATIVE) airplay
+
+$(SHIM): $(SHIM_SRC)
+	@test -x "$(SHIM_CC)" || { echo "no NDK clang at $(SHIM_CC); set NDK or ANDROID_NDK_HOME"; exit 1; }
+	@mkdir -p $(dir $@)
+	$(SHIM_CC) -shared -fPIC -O2 -Wall -Wextra -o $@ $<
+
+.PHONY: build-shim
+build-shim: $(SHIM) ## Build the Android 10 preload for a Magisk board's surface helper
 
 .PHONY: run-lanovo
 run-lanovo: ## Run the host CLI (make run-lanovo ARGS="check")
@@ -250,22 +281,40 @@ dist: payload ## Full build: lanovod, then the lanovo CLI carrying it
 	@mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=0 go build -tags payload -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/lanovo ./cmd/lanovo
 
+# A Magisk board (the SmartClock 2) has no adb root or init service: the binary
+# goes in through su, and the keeper lanovo install set up restarts it.
 .PHONY: install-lanovod
 install-lanovod: build-lanovod device ## Install lanovod, which puts its other parts in place as it starts
 	@sh_vars=$$($(BOARD_SH)) || exit 1; eval "$$sh_vars"; \
-		$(ADB) shell 'setprop ctl.stop lanovod; sleep 1'; \
+		case "$$root" in /data/adb/*) magisk=1 ;; *) magisk= ;; esac; \
+		if [ -n "$$magisk" ]; then \
+			$(ADB) shell "su -c 'test -s $$root/keepers.pid'" || \
+				{ echo "lanovod is not set up on this device yet: run lanovo install first"; exit 1; }; \
+		else \
+			$(ADB) shell 'setprop ctl.stop lanovod; sleep 1'; \
+		fi; \
 		if [ "$$root" = /system ]; then \
 			$(ADB) shell '$(SETRW) && mount -o remount,rw $(REMOUNT_MP)' && \
 			$(ADB) push $(DEVICE_BIN) "$$binary" >/dev/null && \
 			$(ADB) shell "chmod 755 $$binary; restorecon $$binary; sync" && \
 			$(ADB) shell 'mount -o remount,ro $(REMOUNT_MP)' || exit 1; \
+		elif [ -n "$$magisk" ]; then \
+			$(ADB) push $(DEVICE_BIN) /data/local/tmp/lanovod >/dev/null && \
+			$(ADB) shell "su -c 'cp /data/local/tmp/lanovod $$binary.new && chmod 755 $$binary.new && \
+				sync && mv $$binary.new $$binary && sync; rm /data/local/tmp/lanovod'" || exit 1; \
 		else \
 			$(ADB) shell "mkdir -p $${binary%/*}" && \
 			$(ADB) push $(DEVICE_BIN) "$$binary" >/dev/null && \
 			$(ADB) shell "chmod 755 $$binary; sync" || exit 1; \
 		fi; \
-		$(ADB) shell "ls -lZ $$binary"; \
-		$(ADB) shell 'setprop ctl.start lanovod; sleep 1; echo "init.svc: lanovod $$(getprop init.svc.lanovod)"'
+		if [ -n "$$magisk" ]; then \
+			$(ADB) shell "su -c 'ls -lZ $$binary'"; \
+			echo "restarting lanovod; over Wi-Fi the device drops off for a moment"; \
+			$(ADB) shell "su -c 'kill \$$(pidof lanovod)'"; \
+		else \
+			$(ADB) shell "ls -lZ $$binary"; \
+			$(ADB) shell 'setprop ctl.start lanovod; sleep 1; echo "init.svc: lanovod $$(getprop init.svc.lanovod)"'; \
+		fi
 
 .PHONY: restart
 restart: ## Restart lanovod through init
@@ -286,6 +335,39 @@ logs: ## Tail lanovod logs from a connected display
 .PHONY: shell
 shell: ## Open a root shell on a connected display
 	$(ADB) shell
+
+##@ Clock (Lenovo SmartClock 2)
+
+# The SmartClock 2 (board helios) is Magisk-rooted rather than adb-rooted, and
+# runs lanovod from a Magisk boot script that restarts it whenever it exits
+# (internal/parts/magisk), not from init, so restart and state above do not
+# apply to it. These stand in for them.
+
+MAGISK_ROOT := /data/adb/lanovod
+MAGISK_SERVICE := /data/adb/service.d/lanovod.sh
+MAGISK_STOP = 'su -c "kill \$$(cat $(MAGISK_ROOT)/keepers.pid) 2>/dev/null; kill \$$(pidof lanovod lanovo-surface) 2>/dev/null"'
+
+.PHONY: clock-restart
+clock-restart: ## Restart lanovod and the surface helper on the clock
+	@$(ADB) shell 'su -c "setsid nohup sh $(MAGISK_SERVICE) </dev/null >/dev/null 2>&1 &"'
+
+.PHONY: clock-stop
+clock-stop: ## Stop lanovod on the clock until the next boot or clock-restart
+	@$(ADB) shell $(MAGISK_STOP)
+
+.PHONY: clock-state
+clock-state: ## Show what is running on the clock
+	@$(ADB) shell 'su -c "echo \"board:   \$$(getprop ro.lanovo.board)\"; \
+		echo \"version: \$$($(MAGISK_ROOT)/bin/lanovod --version)\"; \
+		echo \"lanovod: \$$(pidof lanovod)\"; echo \"surface: \$$(pidof lanovo-surface)\"; \
+		echo keepers: \$$(cat $(MAGISK_ROOT)/keepers.pid 2>/dev/null)"'
+
+.PHONY: remove-clock
+remove-clock: ## Stop lanovod on the clock and remove the install (state in /data/misc/lanovo is kept)
+	@$(ADB) shell $(MAGISK_STOP); \
+	sleep 1; \
+	$(ADB) shell 'su -c "rm -rf $(MAGISK_ROOT) $(MAGISK_SERVICE)"'
+	@echo "reboot the clock to bring back the stock UI"
 
 ##@ Build & Release
 

@@ -97,6 +97,10 @@ const (
 
 	// init.rc imports /init.${ro.hardware}.rc; the stock ramdisk carries no /init.qcom.rc.
 	BootRC = "/init.qcom.rc"
+
+	// Magisk owns /data/adb, and runs each service.d script once at boot.
+	MagiskDir     = "/data/adb/"
+	MagiskService = "/data/adb/service.d/lanovod.sh"
 )
 
 // A service takes its SELinux domain from the label of the file init execs.
@@ -108,28 +112,42 @@ type Paths struct {
 	Surface    string
 	CamShim    string
 	Camera     string
+
+	// A root under /data/adb is started by a Magisk service.d script, not by
+	// init: it has no InitRC, and its surface helper runs with Shim preloaded.
+	Service  string
+	Shim     string
+	WifiConf string
 }
 
 func For(root string) Paths {
 	if root == "" {
 		root = SystemRoot
 	}
-	rc := root + "/etc/init/lanovod.rc"
-	if root != SystemRoot {
-		rc = BootRC
-	}
-	return Paths{
+	p := Paths{
 		Root:       root,
 		Binary:     root + "/bin/lanovod",
 		PrevBinary: root + "/bin/lanovod.prev",
-		InitRC:     rc,
+		InitRC:     root + "/etc/init/lanovod.rc",
 		Surface:    root + "/bin/lanovo-surface",
 		CamShim:    root + "/lib/liblanovo-camshim.so",
 		Camera:     root + "/bin/lanovo-camera",
 	}
+	switch {
+	case strings.HasPrefix(root, MagiskDir):
+		p.InitRC = ""
+		p.Service = MagiskService
+		p.Shim = root + "/lib/liblanovo-shim.so"
+		p.WifiConf = root + "/wificonf.awk"
+	case root != SystemRoot:
+		p.InitRC = BootRC
+	}
+	return p
 }
 
 func (p Paths) OnSystem() bool { return p.Root == SystemRoot }
+
+func (p Paths) Magisk() bool { return p.Service != "" }
 
 const DefaultName = "Smart Display"
 

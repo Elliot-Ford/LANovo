@@ -34,7 +34,8 @@ func newInstallCmd() *cobra.Command {
 		Use:   "install",
 		Short: "Install LANovo on a display",
 		Long: "Patches the boot command line for permissive SELinux, then installs lanovod and\n" +
-			"its init service.",
+			"its init service. On a Magisk-rooted board (the SmartClock 2) it installs lanovod\n" +
+			"under /data/adb with a Magisk boot script instead, and leaves the boot image alone.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -54,6 +55,18 @@ func newInstallCmd() *cobra.Command {
 				if !ok {
 					return prompt.ErrCanceled
 				}
+			}
+
+			detected, err := takeover.DetectBoard(d, boardName)
+			if err != nil {
+				return err
+			}
+			if takeover.Magisk(detected) {
+				if noBoot || ssid != "" || password != "" || wps || genKey {
+					return fmt.Errorf("%s: --no-boot-patch, the Wi-Fi flags and --generate-key "+
+						"do not apply to a Magisk install", detected.Model)
+				}
+				return installMagisk(ctx, out, d, detected, binary, name)
 			}
 
 			if ok, err := d.IsRoot(); err == nil && !ok {
@@ -120,10 +133,6 @@ func newInstallCmd() *cobra.Command {
 				}
 			}
 
-			detected, err := takeover.DetectBoard(d, boardName)
-			if err != nil {
-				return err
-			}
 			fmt.Fprintf(out, "  %-18s %s\n", "board", styleDone.Render(detected.Name))
 
 			chosen, err := resolveName(ctx, out, d, name)

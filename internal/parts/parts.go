@@ -4,9 +4,12 @@ import (
 	"bytes"
 	_ "embed"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"text/template"
 
 	"github.com/ygelfand/LANovo/internal/android/prop"
@@ -18,6 +21,33 @@ import (
 var initRC string
 
 var rcTemplate = template.Must(template.New("lanovod.rc").Option("missingkey=error").Parse(initRC))
+
+//go:embed magisk/lanovod.sh
+var magiskService []byte
+
+//go:embed magisk/wificonf.awk
+var wifiConf []byte
+
+//go:embed magisk/install.sh
+var magiskInstall []byte
+
+// The installer a host runs on a Magisk board to put lanovod in place.
+func MagiskInstaller() []byte { return magiskInstall }
+
+// native (payload.go) is nil when the helpers are not built in.
+func embedded(name string) []byte {
+	if native == nil {
+		return nil
+	}
+	b, err := fs.ReadFile(native, "payload/"+name)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// One lanovod carries every board's helpers, each built for the board's NativeAPI.
+func helper(api int, name string) []byte { return embedded(fmt.Sprintf("api%d/%s", api, name)) }
 
 type Part struct {
 	Name     string
@@ -32,16 +62,21 @@ type Part struct {
 
 func (p Part) Data() []byte { return p.data }
 
-func Speech() []byte { return speech }
+func Speech() []byte { return helper(board.Current().NativeAPI, "lanovo-asr") }
 
-func Pryon() []byte { return pryon }
+func Pryon() []byte { return helper(board.Current().NativeAPI, "lanovo-pryon") }
 
-func AirPlay() []byte { return airplay }
+func AirPlay() []byte { return helper(board.Current().NativeAPI, "lanovo-airplay") }
 
 func (p Part) For(soc board.SoC) bool { return p.SoC == "" || p.SoC == soc }
 
 func (p Part) at(path string) Part {
 	p.Path = path
+	return p
+}
+
+func (p Part) with(data []byte) Part {
+	p.data = data
 	return p
 }
 
@@ -52,8 +87,7 @@ var (
 		Services: []string{layout.Service},
 	}
 	InitRC  = Part{Name: "service", Mode: 0o644, Boot: true}
-	Surface = Part{Name: "helper", Mode: 0o755,
-		Services: []string{layout.SurfaceService}, data: surface}
+	Surface = Part{Name: "helper", Mode: 0o755, Services: []string{layout.SurfaceService}}
 	CamShim = Part{
 		Name: "camera preload",
 		Mode: 0o644,
@@ -62,10 +96,19 @@ var (
 			layout.CameraServerService,
 			layout.CameraService,
 		},
-		data: camshim,
 	}
-	Camera = Part{Name: "camera helper", Mode: 0o755,
-		Services: []string{layout.CameraService}, data: camera}
+	Camera = Part{Name: "camera helper", Mode: 0o755, Services: []string{layout.CameraService}}
+
+	// On a Magisk board: the boot script that starts and keeps up lanovod and
+	// the surface helper, the preload the API-28 helper needs on Android 10,
+	// and the script that seeds Wi-Fi from the stock networks.
+	MagiskService = Part{Name: "boot script", Mode: 0o755, Boot: true, data: magiskService}
+	Shim          = Part{
+		Name:     "surface preload",
+		Mode:     0o644,
+		Services: []string{layout.SurfaceService},
+	}
+	WifiConf = Part{Name: "wifi seed", Mode: 0o644, data: wifiConf}
 )
 
 func RC(p layout.Paths) ([]byte, error) {
@@ -76,10 +119,23 @@ func RC(p layout.Paths) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// A board with its root off /system carries the service definition in its boot image.
-func Carried(p layout.Paths) ([]Part, error) {
-	carried := []Part{Surface.at(p.Surface), CamShim.at(p.CamShim), Camera.at(p.Camera)}
-	if !p.OnSystem() {
+// A board with its root elsewhere off /system carries the service definition
+// in its boot image; a Magisk board carries its boot script here.
+func Carried(b board.Board) ([]Part, error) {
+	p := b.Paths()
+	carried := []Part{Surface.at(p.Surface).with(helper(b.NativeAPI, "lanovo-surface"))}
+	if b.CameraWidth > 0 {
+		carried = append(carried,
+			CamShim.at(p.CamShim).with(helper(b.NativeAPI, "liblanovo-camshim.so")),
+			Camera.at(p.Camera).with(helper(b.NativeAPI, "lanovo-camera")))
+	}
+	switch {
+	case p.Magisk():
+		return append(carried,
+			Shim.at(p.Shim).with(embedded("liblanovo-shim.so")),
+			MagiskService.at(p.Service),
+			WifiConf.at(p.WifiConf)), nil
+	case !p.OnSystem():
 		return carried, nil
 	}
 	rc, err := RC(p)
@@ -94,7 +150,7 @@ func Carried(p layout.Paths) ([]Part, error) {
 func Ensure() (rebootPending bool) {
 	b := board.Current()
 	paths := b.Paths()
-	carried, err := Carried(paths)
+	carried, err := Carried(b)
 	if err != nil {
 		slog.Error("listing parts failed", "err", err)
 		return false
@@ -131,6 +187,14 @@ func Ensure() (rebootPending bool) {
 			continue
 		}
 		slog.Info("part updated", "part", p.Name, "path", p.Path)
+		if paths.Magisk() {
+			// No init services here: the boot script restarts what exits.
+			if len(p.Services) > 0 {
+				stopRunning(paths.Surface)
+			}
+			rebootPending = rebootPending || p.Boot
+			continue
+		}
 		for _, svc := range p.Services {
 			if state, _ := prop.Local.Getprop("init.svc." + svc); state != "running" {
 				continue
@@ -142,6 +206,30 @@ func Ensure() (rebootPending bool) {
 		rebootPending = rebootPending || p.Boot
 	}
 	return rebootPending
+}
+
+// stopRunning signals every process running the binary at path, including one
+// whose file has just been replaced (its exe then reads "path (deleted)").
+func stopRunning(path string) {
+	dirs, err := os.ReadDir("/proc")
+	if err != nil {
+		return
+	}
+	for _, d := range dirs {
+		exe, err := os.Readlink("/proc/" + d.Name() + "/exe")
+		if err != nil || (exe != path && !strings.HasPrefix(exe, path+" ")) {
+			continue
+		}
+		var pid int
+		if _, err := fmt.Sscanf(d.Name(), "%d", &pid); err != nil {
+			continue
+		}
+		if proc, err := os.FindProcess(pid); err == nil {
+			if err := proc.Signal(syscall.SIGTERM); err != nil {
+				slog.Warn("stopping a stale helper failed", "pid", pid, "err", err)
+			}
+		}
+	}
 }
 
 func Replace(path string, data []byte, mode os.FileMode, labelFrom string) error {

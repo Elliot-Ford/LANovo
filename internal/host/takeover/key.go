@@ -19,7 +19,12 @@ func Key(d *adb.Device) (string, error) {
 		return "", err
 	}
 	if !have {
-		return "", ErrNoKey
+		// On a Magisk board the state directory is root's alone.
+		out, err := d.Shell(suCommand("cat " + layout.KeyPath))
+		if err != nil {
+			return "", ErrNoKey
+		}
+		return parseKey([]byte(out))
 	}
 	b, err := d.ReadFile(layout.KeyPath)
 	if err != nil {

@@ -10,9 +10,11 @@ import (
 	"github.com/ygelfand/LANovo/internal/hardware/mtkaudio"
 )
 
-// The TLV320ADC3101 sends 24-bit samples in 32-bit I2S words.
+// The TLV320ADC3101 sends 24-bit samples in 32-bit I2S words; PDM mics on the
+// SoC's DMIC input (digital) come as 16-bit samples with nothing to load.
 type mediatek struct {
-	chip *board.Chip
+	chip    *board.Chip
+	digital bool
 
 	mu     sync.Mutex
 	loaded bool
@@ -20,9 +22,17 @@ type mediatek struct {
 
 func (*mediatek) device() int { return 1 }
 
-func (*mediatek) bits() int { return 32 }
+func (a *mediatek) bits() int {
+	if a.digital {
+		return 16
+	}
+	return 32
+}
 
 func (a *mediatek) open(*alsa.Mixer) error {
+	if a.digital {
+		return nil
+	}
 	if a.chip == nil {
 		return errors.New("mic: this board has no microphone ADC")
 	}

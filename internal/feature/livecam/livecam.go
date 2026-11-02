@@ -1,6 +1,7 @@
 package livecam
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -26,6 +27,15 @@ func init() {
 type Camera struct{ *live.Camera }
 
 func (c Camera) Restore(config.Config) { c.Publish() }
+
+// A board with no camera (the SmartClock) never starts the hub, which would
+// otherwise keep reviving a helper that has nothing to open.
+func (c Camera) Start(ctx context.Context) error {
+	if board.Current().CameraWidth == 0 {
+		return nil
+	}
+	return c.Camera.Start(ctx)
+}
 
 const (
 	helperService = "lanovo_camera"

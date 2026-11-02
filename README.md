@@ -38,6 +38,7 @@ through the ESPHome native API.
 | Lenovo Smart Display 7  | ivy       | Android Things 8.x | Supported |
 | JBL Link View           | opal      | Android Things 8.x | Supported |
 | Lenovo ThinkSmart View  | penghu    | Android 8.x        | Supported |
+| Lenovo SmartClock 2     | helios    | Android 10         | Rooted (Magisk), in progress |
 
 ## Additional devices supported by our sister project [EchoLocal](https://github.com/ygelfand/echolocal)
 
@@ -188,6 +189,9 @@ make build             # lanovo, lanovod and its native helpers
 make dist              # lanovod, then lanovo carrying it
 make install-lanovod   # build, install, and restart it on a connected display
 ```
+
+The same `lanovod` and `lanovo install` cover the Lenovo SmartClock 2, which must be rooted with
+Magisk. See [the clock notes](internal/parts/magisk/README.md).
 
 ## How it fits together
 

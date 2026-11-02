@@ -2,22 +2,15 @@
 
 package parts
 
-import _ "embed"
+import (
+	"embed"
+	"io/fs"
+)
 
-//go:embed payload/lanovo-surface
-var surface []byte
+// payload/api<N>/ holds the native helpers built for each NativeAPI a board
+// names; payload/ itself holds what one API does not decide.
+//
+//go:embed payload
+var payload embed.FS
 
-//go:embed payload/liblanovo-camshim.so
-var camshim []byte
-
-//go:embed payload/lanovo-camera
-var camera []byte
-
-//go:embed payload/lanovo-asr
-var speech []byte
-
-//go:embed payload/lanovo-pryon
-var pryon []byte
-
-//go:embed payload/lanovo-airplay
-var airplay []byte
+var native fs.FS = payload

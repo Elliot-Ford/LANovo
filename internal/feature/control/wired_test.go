@@ -250,6 +250,9 @@ var byHand = map[string]string{
 
 	"Network.Address": "read back from the lease, not chosen",
 
+	"Dock.Light.On":    "Home Assistant's night light, on boards with a charging base",
+	"Dock.Light.Level": "the same",
+
 	"Screen.Volume":         "not wired yet",
 	"Feedback.Hold":         "the held mute button sound is only exposed by hardware with a hold action",
 	"Diag.MinCores":         "held online only on boards whose kernel hotplugs cores",

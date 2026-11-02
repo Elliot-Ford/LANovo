@@ -14,8 +14,16 @@ var ErrNoName = errors.New("no device name")
 
 func ReadName(d *adb.Device) (string, error) {
 	have, err := d.Exists(layout.NamePath)
-	if err != nil || !have {
+	if err != nil {
 		return "", err
+	}
+	if !have {
+		// On a Magisk board the state directory is root's alone.
+		out, err := d.Shell(suCommand("cat " + layout.NamePath))
+		if err != nil {
+			return "", nil
+		}
+		return strings.TrimSpace(out), nil
 	}
 
 	b, err := d.ReadFile(layout.NamePath)

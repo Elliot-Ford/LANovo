@@ -2,14 +2,6 @@
 
 package parts
 
-var surface []byte
+import "io/fs"
 
-var camshim []byte
-
-var camera []byte
-
-var speech []byte
-
-var pryon []byte
-
-var airplay []byte
+var native fs.FS
